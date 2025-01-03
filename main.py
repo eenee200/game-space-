@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+import random
 import pygame
 import time 
 pygame.font.init()
@@ -104,6 +105,7 @@ PLAYER_WIDTH, PLAYER_HEIGHT = 50, 70
 PLAYER_IMAGE = pygame.transform.scale(pygame.image.load(IMAGE_DIR /"player1.png"), (PLAYER_WIDTH, PLAYER_HEIGHT))
 PLAYER_MASK = pygame.mask.from_surface(PLAYER_IMAGE)
 PLAYER_HP = 3
+PLAYER_LIFE = 3
 PLAYER_VEL = 5
 
 BG = pygame.transform.scale(pygame.image.load(IMAGE_DIR / "bg.jpg"), (WIDTH, HEIGHT))
@@ -124,7 +126,7 @@ POWERUP_FIRE_RATE = 150
 
 POWERUP_WIDTH = 10
 POWERUP_HEIGHT = 10
-POWERUP_VEL = 7
+POWERUP_VEL = 5
 
 BULLET_WIDTH = 5
 BULLET_HEIGHT = 10
@@ -133,16 +135,77 @@ BULLET_DAMAGE = 1
 
 FONT = pygame.font.SysFont("comicsans", 30)
 
+class Particle:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        # Random velocity for scattered movement
+        self.vel_x = random.randint(-8, 8)
+        self.vel_y = random.randint(-10, -2)
+        self.lifetime = 30  # Number of frames particle will exist
+        self.size = random.randint(2, 4)
+        # Create a random color variation of white/gray
+        color_value = random.randint(200, 255)
+        self.color = (color_value, color_value, color_value)
+        self.gravity = 0.5
+
+    def move(self):
+        self.x += self.vel_x
+        self.y += self.vel_y
+        self.vel_y += self.gravity  # Add gravity effect
+        self.lifetime -= 1
+
+    def draw(self, window):
+        pygame.draw.circle(window, self.color, (int(self.x), int(self.y)), self.size)
+
+class DamageEffect:
+    def __init__(self):
+        self.particles = []
+    
+    def create_particles(self, x, y):
+        # Create multiple particles at the damage position
+        for _ in range(20):  # Number of particles
+            particle = Particle(x, y)
+            self.particles.append(particle)
+    
+    def update(self):
+        # Update and remove dead particles
+        for particle in self.particles[:]:
+            particle.move()
+            if particle.lifetime <= 0:
+                self.particles.remove(particle)
+    
+    def draw(self, window):
+        for particle in self.particles:
+            particle.draw(window)
+
 class Player:
     def __init__(self, x, y):
         self.x = x
         self.y = y
         self.rect = pygame.Rect(x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
+        self.life = PLAYER_LIFE
         self.hp = PLAYER_HP
         self.max_hp = PLAYER_HP
         self.mask = PLAYER_MASK
         self.width = PLAYER_WIDTH
         self.height = PLAYER_HEIGHT
+        self.damage_effect = DamageEffect()  # Add damage effect system
+        self.last_damage_time = 0
+        self.invulnerable_time = 2000  # 1 second of invulnerability after taking damage
+
+    def take_damage(self, amount):
+        current_time = pygame.time.get_ticks()
+        if current_time - self.last_damage_time >= self.invulnerable_time:
+            self.hp -= amount
+            self.last_damage_time = current_time
+            # Create particles at the player's position
+            self.damage_effect.create_particles(
+                self.rect.x + self.width // 2,
+                self.rect.y + self.height // 2
+            )
+            return True
+        return False
 
     def collide(self, obj_x, obj_y, obj_mask):
         offset_x = obj_x - self.rect.x
@@ -151,18 +214,59 @@ class Player:
     
 
 class Star:
-    def __init__(self, x, y):
+    def __init__(self, x, y, movement_pattern="linear"):
         self.x = x
         self.y = y
         self.rect = pygame.Rect(x, y, STAR_WIDTH, STAR_HEIGHT)
         self.hp = STAR_INITIAL_HP
         self.max_hp = STAR_INITIAL_HP
         self.mask = STAR_MASK
+        self.movement_pattern = movement_pattern
+        self.angle = 0  # For circular motion
+        self.original_x = x  # Store original x position for sine movement
+        self.time_created = pygame.time.get_ticks()  # For timing-based movements
+        
+    def move(self):
+        if self.movement_pattern == "linear":
+            self.rect.y += STAR_VEL
+            
+        elif self.movement_pattern == "sine":
+            self.rect.y += STAR_VEL
+            # Sine wave movement
+            self.rect.x = self.original_x + math.sin(self.rect.y / 50) * 100
+            
+        elif self.movement_pattern == "zigzag":
+            self.rect.y += STAR_VEL
+            # Zigzag every 40 pixels
+            if (self.rect.y // 40) % 2 == 0:
+                self.rect.x += 2
+            else:
+                self.rect.x -= 2
+                
+        elif self.movement_pattern == "circular":
+            self.angle += 0.05
+            self.rect.y += STAR_VEL
+            self.rect.x = self.original_x + math.cos(self.angle) * 50
+            
+        elif self.movement_pattern == "chase":
+            # Basic player tracking (add player parameter when calling)
+            if hasattr(self, 'player'):
+                dx = self.player.rect.x - self.rect.x
+                dy = self.player.rect.y - self.rect.y
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist != 0:
+                    self.rect.x += (dx / dist) * (STAR_VEL * 0.5)
+                    self.rect.y += (dy / dist) * (STAR_VEL * 0.5)
+            else:
+                self.rect.y += STAR_VEL
 
     def collide(self, obj_x, obj_y, obj_mask):
         offset_x = obj_x - self.rect.x
         offset_y = obj_y - self.rect.y
         return self.mask.overlap(obj_mask, (offset_x, offset_y)) is not None
+
+# Modified formation functions to include different movement patterns
+
 class Powerup:
     def __init__(self, x, y):
         self.rect = pygame.Rect(x, y, POWERUP_WIDTH, POWERUP_HEIGHT)
@@ -222,44 +326,56 @@ def create_v_formation():
     stars = []
     center_x = WIDTH // 2
     start_y = -STAR_HEIGHT
+    patterns = ["sine"]
     for i in range(5):
-        # Create V pattern
+        # Create V pattern with different movement patterns
         left_x = center_x - (i * 40)
         right_x = center_x + (i * 40)
         y = start_y + (i * 40)
-        stars.append(Star(left_x, y))
-        if i > 0:  # Don't create duplicate star at the point of the V
-            stars.append(Star(right_x, y))
+        pattern = patterns[i % len(patterns)]
+        stars.append(Star(left_x, y, pattern))
+        if i > 0:
+            stars.append(Star(right_x, y, patterns[(i + 1) % len(patterns)]))
     return stars
 
 def create_line_formation():
     stars = []
     start_x = WIDTH // 4
+    patterns = ["sine", "zigzag"]
     for i in range(8):
         x = start_x + (i * 80)
-        stars.append(Star(x, -STAR_HEIGHT))
+        pattern = patterns[i % len(patterns)]
+        stars.append(Star(x, -STAR_HEIGHT, pattern))
     return stars
 
 def create_diamond_formation():
     stars = []
     center_x = WIDTH // 2
     start_y = -STAR_HEIGHT
-    # Create diamond pattern
+    patterns = ["sine", "zigzag", "circular", "linear", "chase"]
     positions = [
         (0, 0), (-1, -1), (1, -1),
         (-2, 0), (2, 0),
         (-1, 1), (1, 1),
         (0, 2)
     ]
-    for dx, dy in positions:
+    for i, (dx, dy) in enumerate(positions):
         x = center_x + (dx * 40)
         y = start_y + (dy * 40)
-        stars.append(Star(x, y))
+        pattern = patterns[i % len(patterns)]
+        stars.append(Star(x, y, pattern))
     return stars
+
+# First, add this at the top with other constants:
+LIFE_ICON_SIZE = 25  # Size for the life indicator images
+LIFE_ICON = pygame.transform.scale(PLAYER_IMAGE, (LIFE_ICON_SIZE, LIFE_ICON_SIZE))
+LIFE_SPACING = 35  # Space between life icons
 
 def draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, powerup_active, wave_number):
     WIN.blit(BG, (0, bg_y1))
     WIN.blit(BG, (0, bg_y2))
+
+    player.damage_effect.draw(WIN)
 
     time_text = FONT.render(f"Time: {round(elapsed_time)}s", 1, "white")
     WIN.blit(time_text, (10, 10))
@@ -270,15 +386,25 @@ def draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, po
     wave_text = FONT.render(f"Wave: {wave_number}", 1, "white")
     WIN.blit(wave_text, (WIDTH//2 - wave_text.get_width()//2, 10))
 
-    # Add health display
+    # Draw HP
     health_text = FONT.render(f"HP: {player.hp}", 1, "white")
     WIN.blit(health_text, (10, 40))
+
+    # Draw life icons instead of text
+    for i in range(player.life):
+        WIN.blit(LIFE_ICON, (10 + (i * LIFE_SPACING), 70))
 
     if powerup_active:
         powerup_text = FONT.render("POWER UP!", 1, "orange")
         WIN.blit(powerup_text, (WIDTH/2 - powerup_text.get_width()/2, 40))
 
-    WIN.blit(PLAYER_IMAGE, (player.rect.x, player.rect.y))  # Changed from player.x to player.rect.x
+    # Draw player with flashing effect when damaged
+    current_time = pygame.time.get_ticks()
+    if (current_time - player.last_damage_time) < player.invulnerable_time:
+        if (current_time // 100) % 2 == 0:  # Flash every 100ms
+            WIN.blit(PLAYER_IMAGE, (player.rect.x, player.rect.y))
+    else:
+        WIN.blit(PLAYER_IMAGE, (player.rect.x, player.rect.y))
 
     for bullet in bullets:
         pygame.draw.rect(WIN, "yellow", bullet)
@@ -308,7 +434,7 @@ def main():
     powerup_active = False
 
     waves = [
-        Wave(create_v_formation, create_single_powerup),
+        Wave(create_v_formation, create_circle_powerups),
         Wave(create_line_formation, create_zigzag_powerups),
         Wave(create_diamond_formation, create_diagonal_powerups),
         Wave(create_v_formation),  # Some waves without powerups for variety
@@ -337,7 +463,8 @@ def main():
         elapsed_time = time.time() - start_time
         current_time = pygame.time.get_ticks()
         powerup_count += clock.tick(100)
-
+        
+        player.damage_effect.update()
         if powerup_active and current_time - powerup_start_time >= POWERUP_DURATION:
             powerup_active = False
 
@@ -404,15 +531,30 @@ def main():
                 bullets.remove(bullet)
 
         for star in stars[:]:
-            star.rect.y += STAR_VEL
-            if star.rect.y > HEIGHT:
+            # Set player reference for chasing stars
+            if star.movement_pattern == "chase":
+                star.player = player
+            
+            # Move star according to its pattern
+            star.move()
+            
+            # Check if star is off screen
+            if (star.rect.y > HEIGHT or 
+                star.rect.x < -STAR_WIDTH or 
+                star.rect.x > WIDTH):
                 stars.remove(star)
+                continue
+            
+            # Rest of the collision detection code remains the same
             elif star.collide(player.rect.x, player.rect.y, player.mask):
-                stars.remove(star)
-                player.hp -= STAR_DAMAGE
-                if player.hp <= 0:
-                    hit = True
-                break
+                if player.take_damage(STAR_DAMAGE):
+                    stars.remove(star)
+                    if player.hp <= 0:
+                        player.life -= 1  
+                        player.hp = PLAYER_HP
+                        if player.life < 0:
+                            hit = True
+                            break
             
             for bullet in bullets[:]:
                 if star.collide(bullet.x, bullet.y, BULLET_MASK):
@@ -437,7 +579,7 @@ def main():
             lost_text = FONT.render("You Lost!", 1, "white")
             WIN.blit(lost_text, (WIDTH/2 - lost_text.get_width()/2, HEIGHT/2 - lost_text.get_height()/2))
             pygame.display.update()
-            pygame.time.delay(4000)
+            pygame.time.delay(1000)
             break
 
         draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, powerup_active, current_wave + 1)  # Changed from player.rect to player
