@@ -3,6 +3,7 @@ from pathlib import Path
 import random
 import pygame
 import time 
+import random
 pygame.font.init()
 
 TITLE_FONT = pygame.font.SysFont("comicsans", 70)
@@ -101,6 +102,8 @@ pygame.display.set_caption("Space+")
 ROOT_DIR = Path(__file__).parent
 IMAGE_DIR = ROOT_DIR / "image"
 
+
+
 PLAYER_WIDTH, PLAYER_HEIGHT = 50, 70
 PLAYER_IMAGE = pygame.transform.scale(pygame.image.load(IMAGE_DIR /"player1.png"), (PLAYER_WIDTH, PLAYER_HEIGHT))
 PLAYER_MASK = pygame.mask.from_surface(PLAYER_IMAGE)
@@ -109,6 +112,11 @@ PLAYER_LIFE = 3
 PLAYER_VEL = 5
 
 BG = pygame.transform.scale(pygame.image.load(IMAGE_DIR / "bg.jpg"), (WIDTH, HEIGHT))
+
+# First, add this at the top with other constants:
+LIFE_ICON_SIZE = 25  # Size for the life indicator images
+LIFE_ICON = pygame.transform.scale(PLAYER_IMAGE, (LIFE_ICON_SIZE, LIFE_ICON_SIZE))
+LIFE_SPACING = 35  # Space between life icons
 
 
 STAR_INITIAL_HP = 2
@@ -132,6 +140,20 @@ BULLET_WIDTH = 5
 BULLET_HEIGHT = 10
 BULLET_VEL = 7
 BULLET_DAMAGE = 1
+
+BOSS_WIDTH = 200
+BOSS_HEIGHT = 200
+BOSS_HP = {
+    1: 20,  # Level 1 boss HP
+    2: 30,  # Level 2 boss HP
+    3: 40   # Level 3 boss HP
+}
+BOSS_DAMAGE = 2
+BOSS_POINT = 50
+BOSS_VEL = 2
+
+BOSS_IMAGE = pygame.transform.scale(pygame.image.load(IMAGE_DIR / "star.png"), (BOSS_WIDTH, BOSS_HEIGHT))
+BOSS_MASK = pygame.mask.from_surface(BOSS_IMAGE)
 
 FONT = pygame.font.SysFont("comicsans", 30)
 
@@ -366,12 +388,128 @@ def create_diamond_formation():
         stars.append(Star(x, y, pattern))
     return stars
 
-# First, add this at the top with other constants:
-LIFE_ICON_SIZE = 25  # Size for the life indicator images
-LIFE_ICON = pygame.transform.scale(PLAYER_IMAGE, (LIFE_ICON_SIZE, LIFE_ICON_SIZE))
-LIFE_SPACING = 35  # Space between life icons
+class Boss:
+    def __init__(self, level):
+        self.level = level
+        self.width = BOSS_WIDTH
+        self.height = BOSS_HEIGHT
+        self.x = WIDTH // 2 - self.width // 2
+        self.y = -self.height
+        self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        self.hp = BOSS_HP[level]
+        self.max_hp = BOSS_HP[level]
+        self.mask = BOSS_MASK
+        self.pattern_timer = 0
+        self.current_pattern = 0
+        self.patterns = [
+            self.pattern_horizontal,
+            self.pattern_circle,
+            self.pattern_diagonal
+        ]
+        self.bullet_cooldown = 1000  # Time between bullet patterns
+        self.last_shot = 0
+        
+    def move(self):
+        # Move to initial position if not there yet
+        if self.rect.y < 50:
+            self.rect.y += BOSS_VEL
+            return []
+        
+        # Execute current pattern and get bullets
+        current_time = pygame.time.get_ticks()
+        if current_time - self.last_shot >= self.bullet_cooldown:
+            self.last_shot = current_time
+            return self.patterns[self.current_pattern]()
+        return []
+    
+    def pattern_horizontal(self):
+        bullets = []
+        for i in range(5):
+            x = self.rect.x + (i * (self.width // 4))
+            bullet = pygame.Rect(x, self.rect.y + self.height, BULLET_WIDTH, BULLET_HEIGHT)
+            bullets.append(("enemy", bullet, 5))  # (type, bullet_rect, velocity)
+        return bullets
+    
+    def pattern_circle(self):
+        bullets = []
+        num_bullets = 8
+        for i in range(num_bullets):
+            angle = (i / num_bullets) * 2 * math.pi
+            dx = math.cos(angle) * 5
+            dy = math.sin(angle) * 5
+            bullet = pygame.Rect(
+                self.rect.x + self.width//2,
+                self.rect.y + self.height//2,
+                BULLET_WIDTH,
+                BULLET_HEIGHT
+            )
+            bullets.append(("enemy", bullet, (dx, dy)))  # (type, bullet_rect, (dx, dy))
+        return bullets
+    
+    def pattern_diagonal(self):
+        bullets = []
+        for i in range(-2, 3):
+            bullet = pygame.Rect(
+                self.rect.x + self.width//2,
+                self.rect.y + self.height,
+                BULLET_WIDTH,
+                BULLET_HEIGHT
+            )
+            bullets.append(("enemy", bullet, (i*2, 5)))  # Diagonal movement
+        return bullets
+    
+    def change_pattern(self):
+        self.current_pattern = (self.current_pattern + 1) % len(self.patterns)
+    
+    def collide(self, obj_x, obj_y, obj_mask):
+        offset_x = obj_x - self.rect.x
+        offset_y = obj_y - self.rect.y
+        return self.mask.overlap(obj_mask, (offset_x, offset_y)) is not None
 
-def draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, powerup_active, wave_number):
+class Level:
+    def __init__(self, number, waves, boss=None):
+        self.number = number
+        self.waves = waves
+        self.boss = boss
+        self.current_wave = 0
+        self.completed = False
+        self.boss_spawned = False
+
+def create_levels():
+    levels = []
+    
+    # Level 1
+    level1_waves = [
+        Wave(create_v_formation, create_single_powerup),
+        Wave(create_line_formation),
+        Wave(create_diamond_formation, create_circle_powerups)
+    ]
+    levels.append(Level(1, level1_waves, Boss(1)))
+    
+    # Level 2
+    level2_waves = [
+        Wave(create_line_formation, create_zigzag_powerups),
+        Wave(create_diamond_formation),
+        Wave(create_v_formation, create_triple_powerup),
+        Wave(create_diamond_formation, create_circle_powerups)
+    ]
+    levels.append(Level(2, level2_waves, Boss(2)))
+    
+    # Level 3
+    level3_waves = [
+        Wave(create_diamond_formation, create_diagonal_powerups),
+        Wave(create_line_formation),
+        Wave(create_v_formation, create_circle_powerups),
+        Wave(create_diamond_formation),
+        Wave(create_line_formation, create_triple_powerup)
+    ]
+    levels.append(Level(3, level3_waves, Boss(3)))
+    
+    return levels
+
+
+def draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, 
+         powerup_active, wave_number, boss, enemy_bullets, level_number):
     WIN.blit(BG, (0, bg_y1))
     WIN.blit(BG, (0, bg_y2))
 
@@ -383,15 +521,31 @@ def draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, po
     point_text = FONT.render(f"Score: {round(score)}", 1, "white")
     WIN.blit(point_text, (WIDTH - point_text.get_width() - 10, 10))
 
-    wave_text = FONT.render(f"Wave: {wave_number}", 1, "white")
-    WIN.blit(wave_text, (WIDTH//2 - wave_text.get_width()//2, 10))
+    # wave_text = FONT.render(f"Wave: {wave_number}", 1, "white")
+    # WIN.blit(wave_text, (WIDTH//2 - wave_text.get_width()//2, 10))
 
     # Draw HP
-    health_text = FONT.render(f"HP: {player.hp}", 1, "white")
-    WIN.blit(health_text, (10, 40))
+    # health_text = FONT.render(f"HP: {player.hp}", 1, "white")
+    # WIN.blit(health_text, (10, 40))
+
+    level_text = FONT.render(f"Level: {level_number}", 1, "white")
+    WIN.blit(level_text, (WIDTH//2 - level_text.get_width()//2, 40))
+    
+    # Draw boss if exists
+    if boss:
+        WIN.blit(BOSS_IMAGE, (boss.rect.x, boss.rect.y))
+        # Draw boss health bar
+        health_ratio = boss.hp / boss.max_hp
+        health_width = 200
+        pygame.draw.rect(WIN, "red", (WIDTH//2 - health_width//2, 20, health_width, 20))
+        pygame.draw.rect(WIN, "green", (WIDTH//2 - health_width//2, 20, health_width * health_ratio, 20))
+    
+    # Draw enemy bullets
+    for _, bullet, _ in enemy_bullets:
+        pygame.draw.rect(WIN, "red", bullet)
 
     # Draw life icons instead of text
-    for i in range(player.life):
+    for i in range(player.hp):
         WIN.blit(LIFE_ICON, (10 + (i * LIFE_SPACING), 70))
 
     if powerup_active:
@@ -433,16 +587,22 @@ def main():
     powerup_start_time = 0
     powerup_active = False
 
-    waves = [
-        Wave(create_v_formation, create_circle_powerups),
-        Wave(create_line_formation, create_zigzag_powerups),
-        Wave(create_diamond_formation, create_diagonal_powerups),
-        Wave(create_v_formation),  # Some waves without powerups for variety
-        Wave(create_line_formation, create_single_powerup),
-        Wave(create_diamond_formation, create_triple_powerup),
-    ]
+    levels = create_levels()
+    current_level = 0
+    boss = None
+    enemy_bullets = []
+
+    # waves = [
+    #     Wave(create_v_formation, create_circle_powerups),
+    #     Wave(create_line_formation, create_zigzag_powerups),
+    #     Wave(create_diamond_formation, create_diagonal_powerups),
+    #     Wave(create_v_formation),  # Some waves without powerups for variety
+    #     Wave(create_line_formation, create_single_powerup),
+    #     Wave(create_diamond_formation, create_triple_powerup),
+    # ]
     current_wave = 0
     wave_delay = 0
+    wave_number = 1
 
     stars = []
     powerups = []
@@ -477,26 +637,34 @@ def main():
             bg_y2 = -HEIGHT
 
         # Wave management
-        if len(stars) == 0:
+        if len(stars) == 0 and not boss:
             if wave_delay <= 0:
-                if current_wave < len(waves):
-                    # Spawn stars
-                    new_stars = waves[current_wave].pattern_func()
-                    stars.extend(new_stars)
-                    
-                    # Spawn powerups if wave has powerup pattern
-                    if waves[current_wave].powerup_pattern_func:
-                        new_powerups = waves[current_wave].powerup_pattern_func()
-                        powerups.extend(new_powerups)
-                    
-                    current_wave += 1
-                    wave_delay = waves[current_wave-1].delay
+                current_level_obj = levels[current_level]
+                if current_level_obj.current_wave < len(current_level_obj.waves):
+                    # Spawn normal wave
+                    wave = current_level_obj.waves[current_level_obj.current_wave]
+                    stars.extend(wave.pattern_func())
+                    if wave.powerup_pattern_func:
+                        powerups.extend(wave.powerup_pattern_func())
+                    current_level_obj.current_wave += 1
+                    wave_number += 1
+                    wave_delay = wave.delay
+                elif not current_level_obj.boss_spawned:
+                    # Spawn boss
+                    boss = current_level_obj.boss
+                    current_level_obj.boss_spawned = True
                 else:
-                    # Reset to first wave when all waves are complete
-                    current_wave = 0
+                    # Level completed
+                    current_level += 1
+                    if current_level >= len(levels):
+                        # Game completed!
+                        victory_text = FONT.render("Congratulations! You've completed the game!", 1, "white")
+                        WIN.blit(victory_text, (WIDTH/2 - victory_text.get_width()/2, HEIGHT/2))
+                        pygame.display.update()
+                        pygame.time.delay(2000)
+                        break
             else:
                 wave_delay -= clock.get_time()
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 run = False
@@ -525,6 +693,57 @@ def main():
         if keys[pygame.K_s] and player.rect.y + PLAYER_VEL <= HEIGHT - PLAYER_HEIGHT:
             player.rect.y += PLAYER_VEL
 
+        if boss:
+            # Move boss and get new bullets
+            new_bullets = boss.move()
+            enemy_bullets.extend(new_bullets)
+            
+            # Boss collision with player
+            if boss.collide(player.rect.x, player.rect.y, player.mask):
+                if player.take_damage(BOSS_DAMAGE):
+                    if player.hp <= 0:
+                        hit = True
+                        break
+            
+            # Player bullets hitting boss
+            for bullet in bullets[:]:
+                if boss.collide(bullet.x, bullet.y, BULLET_MASK):
+                    bullets.remove(bullet)
+                    boss.hp -= BULLET_DAMAGE
+                    if boss.hp <= 0:
+                        boss = None
+                        score += BOSS_POINT
+                        break
+            
+            # Change boss pattern periodically
+            current_time = pygame.time.get_ticks()
+            if current_time - boss.pattern_timer > 5000:  # Change pattern every 5 seconds
+                boss.change_pattern()
+                boss.pattern_timer = current_time
+        
+        # Update enemy bullets
+        for bullet_info in enemy_bullets[:]:
+            bullet_type, bullet, velocity = bullet_info
+            if isinstance(velocity, tuple):
+                dx, dy = velocity
+                bullet.x += dx
+                bullet.y += dy
+            else:
+                bullet.y += velocity
+            
+            # Remove off-screen bullets
+            if (bullet.y > HEIGHT or bullet.y < 0 or 
+                bullet.x > WIDTH or bullet.x < 0):
+                enemy_bullets.remove(bullet_info)
+                continue
+            
+            # Check collision with player
+            if bullet.colliderect(player.rect):
+                enemy_bullets.remove(bullet_info)
+                if player.take_damage(1):
+                    if player.hp <= 0:
+                        hit = True
+                        break
         for bullet in bullets[:]:
             bullet.y -= BULLET_VEL
             if bullet.y < 0:
@@ -550,9 +769,6 @@ def main():
                 if player.take_damage(STAR_DAMAGE):
                     stars.remove(star)
                     if player.hp <= 0:
-                        player.life -= 1  
-                        player.hp = PLAYER_HP
-                        if player.life < 0:
                             hit = True
                             break
             
@@ -582,7 +798,8 @@ def main():
             pygame.time.delay(1000)
             break
 
-        draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, powerup_active, current_wave + 1)  # Changed from player.rect to player
+        draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2, 
+             powerup_active, wave_number, boss, enemy_bullets, levels[current_level].number)
 
     pass
 
