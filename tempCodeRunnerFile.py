@@ -550,7 +550,7 @@ def draw(player, elapsed_time, score, stars, bullets, powerups, bg_y1, bg_y2,
 
     if powerup_active:
         powerup_text = FONT.render("POWER UP!", 1, "orange")
-        WIN.blit(powerup_text, (WIDTH/2 - powerup_text.get_width()/2, 40))
+        WIN.blit(powerup_text, (WIDTH/2 - powerup_text.get_width()/2, 10))
 
     # Draw player with flashing effect when damaged
     current_time = pygame.time.get_ticks()
@@ -697,6 +697,11 @@ def main():
             # Move boss and get new bullets
             new_bullets = boss.move()
             enemy_bullets.extend(new_bullets)
+            current_time = pygame.time.get_ticks()
+            if boss.hp <= 0:
+                if current_time - boss.pattern_timer >= 5000:  # Change pattern every 5 seconds
+                    boss.change_pattern()
+                    boss.pattern_timer = current_time
             
             # Boss collision with player
             if boss.collide(player.rect.x, player.rect.y, player.mask):
@@ -715,11 +720,6 @@ def main():
                         score += BOSS_POINT
                         break
             
-            # Change boss pattern periodically
-            current_time = pygame.time.get_ticks()
-            if current_time - boss.pattern_timer > 5000:  # Change pattern every 5 seconds
-                boss.change_pattern()
-                boss.pattern_timer = current_time
         
         # Update enemy bullets
         for bullet_info in enemy_bullets[:]:
